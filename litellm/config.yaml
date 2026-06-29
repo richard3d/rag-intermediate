@@ -1,0 +1,16 @@
+general_settings:
+  master_key: sk-local
+
+model_list:
+  - model_name: llama3.2
+    litellm_params:
+      model: ollama/llama3.2
+      api_base: http://ollama:11434
+      supports_function_calling: true
+  
+  # Example: adding more models to the list
+  #- model_name: llama3.1
+  #  litellm_params:
+  #    model: ollama/llama3.1
+  #    api_base: http://ollama:11434
+  #    supports_function_calling: true
