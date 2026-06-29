@@ -4,6 +4,7 @@ from query import query_rag
 
 app = FastAPI()
 
+
 class QueryRequest(BaseModel):
     prompt: str
 
@@ -14,6 +15,7 @@ class QueryRequest(BaseModel):
             raise ValueError("prompt must not be empty")
         return v
 
+
 class QueryResponse(BaseModel):
     response: str
 
@@ -23,6 +25,7 @@ class QueryResponse(BaseModel):
         if not v.strip():
             raise ValueError("response must not be empty")
         return v
+
 
 @app.post("/query-rag", response_model=QueryResponse)
 def query_rag_endpoint(body: QueryRequest) -> QueryResponse:

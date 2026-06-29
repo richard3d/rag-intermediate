@@ -11,7 +11,7 @@ if __name__ == "__main__":
         daemon=True,
     )
     server_thread.start()
-    
+
     observer = start_file_observer(watch_directory=FILE_OBSERVER_DIRECTORY)
 
     try:

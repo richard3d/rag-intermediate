@@ -1,19 +1,22 @@
 import aiofiles
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+
 async def chunk_text_file(file_path, chunk_size=1000, chunk_overlap=100):
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         length_function=len,
-        separators=["\n\n", "\n", " ", ""]
+        separators=["\n\n", "\n", " ", ""],
     )
 
     block_size = chunk_size * 2
     buffer = ""
 
     try:
-        async with aiofiles.open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        async with aiofiles.open(
+            file_path, "r", encoding="utf-8", errors="ignore"
+        ) as f:
             while True:
                 block = await f.read(block_size)
                 if not block:

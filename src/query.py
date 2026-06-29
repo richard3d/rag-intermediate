@@ -1,12 +1,12 @@
-from langchain_openai import ChatOpenAI
-from langchain_ollama import OllamaEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.rate_limiters import InMemoryRateLimiter
 from langchain_postgres import PGVector
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from config import (
     DB_CONNECTION_STR,
-    OLLAMA_BASE_URL,
     EMBEDDING_MODEL,
+    EMBEDDING_REQUESTS_PER_SECOND,
     LITELLM_BASE_URL,
     LITELLM_API_KEY,
     LITELLM_MODEL,
@@ -23,15 +23,26 @@ Question:
 
 Answer:"""
 
+
 def retrieve_chunks(question: str, k: int = 3) -> list[str]:
-    embedder = OllamaEmbeddings(model=EMBEDDING_MODEL, base_url=OLLAMA_BASE_URL)
+    rate_limiter = InMemoryRateLimiter(
+        requests_per_second=EMBEDDING_REQUESTS_PER_SECOND
+    )
+    embedder = OpenAIEmbeddings(
+        model=EMBEDDING_MODEL,
+        openai_api_base=LITELLM_BASE_URL,
+        openai_api_key=LITELLM_API_KEY,
+        rate_limiter=rate_limiter,
+    )
     store = PGVector(
         embeddings=embedder,
         collection_name="documents",
         connection=DB_CONNECTION_STR,
     )
+    # PGVector internally calls embed_query so we do not need to do it manually
     docs = store.similarity_search(question, k=k)
     return [doc.page_content for doc in docs]
+
 
 def query_rag(question: str) -> str:
     chunks = retrieve_chunks(question)
