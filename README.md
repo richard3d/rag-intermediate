@@ -120,10 +120,6 @@ CPU inference works out of the box. For GPU support on Linux with an NVIDIA card
 - **LLM gateway pattern** — LiteLLM exposes an OpenAI-compatible API so the RAG service can use `ChatOpenAI` regardless of what model or provider is running underneath; switching models is a gateway config change, not a code change
 - **Provider portability** — because the RAG service speaks OpenAI-compatible REST, you could point LiteLLM at a cloud provider (e.g. Anthropic, OpenAI, Bedrock) by adding an entry to `litellm/config.yaml` with no changes to application code
 - **Vector store abstraction** — `PGVector` from `langchain_postgres` handles schema management, upserts, and similarity search so application code works at the level of documents and queries rather than SQL strings
-- **Chunking strategy** — overlapping windows (`chunk_size=1000`, `chunk_overlap=100`) prevent context from being cut off at chunk boundaries
-- **Embedding model separation** — using a dedicated embedding model (`nomic-embed-text`) separate from the generative model (`llama3.2`) is standard practice; each is optimized for its task
-- **Prompt grounding** — the system prompt instructs the LLM to answer strictly from the retrieved context and admit when it cannot find the answer, reducing hallucination
-- **Re-ingestion** — dropping a file that was previously ingested deletes the old embeddings before re-processing, preventing duplicate chunks
 
 ## Design Trade-offs & Potential Improvements
 

@@ -1,4 +1,4 @@
-name: intermediate-rag
+name: rag-intermediate
 
 services:
   ollama:
