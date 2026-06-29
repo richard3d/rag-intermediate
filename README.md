@@ -1,24 +1,33 @@
-# Basic RAG
+# RAG-Intermediate
 
-A self-contained Retrieval-Augmented Generation (RAG) system built with Python and LangChain. This project was written as a hands-on exercise to understand the core mechanics of RAG pipelines — from document ingestion to vector search to LLM-generated answers — all running locally with no external API keys required.
+A Retrieval-Augmented Generation (RAG) system that evolves the [rag-basic](https://github.com/richardbecker/rag-basic) project by introducing two architectural improvements that were called out as future work: an LLM gateway (LiteLLM) and a proper vector store abstraction (LangChain's `PGVector`).
+
+## What Changed from RAG-Basic
+
+The basic version called Ollama directly from application code using `langchain_ollama`'s `ChatOllama` and `OllamaEmbeddings`, and managed all vector storage through raw `psycopg` SQL. This intermediate version addresses both of those trade-offs:
+
+**LiteLLM gateway for LLM calls** — a LiteLLM container now sits between the RAG service and Ollama. The RAG service talks to LiteLLM's OpenAI-compatible REST API using `ChatOpenAI` from `langchain_openai` instead of `ChatOllama`. Swapping the underlying model (e.g. from a local Ollama model to a cloud provider) is now a config change in LiteLLM, not a code change in the RAG service. Embeddings still call Ollama directly via `OllamaEmbeddings` — LiteLLM's embedding support was not needed here, but the same gateway pattern could be extended to cover it.
+
+**`PGVector` store instead of raw SQL** — `embed.py` and `query.py` now use LangChain's `PGVector` from `langchain_postgres` for all vector operations. The hand-written DDL, raw `psycopg` inserts, and cosine similarity SQL are gone. `PGVector` manages the schema, batching, and similarity search internally.
 
 ## What It Does
 
 Drop a text file into a watched directory and the system automatically chunks it, embeds it, and stores the vectors in a PostgreSQL database. Then ask questions against those documents via a REST API and get answers grounded in the ingested content.
 
 ```
-Document → Chunker → Embedder → pgvector DB
-                                     ↑
-Question → Embedder → Similarity Search → LLM → Answer
+Document → Chunker → Embedder (Ollama) → PGVector (pgvector DB)
+                                               ↑
+Question → Embedder (Ollama) → Similarity Search → LiteLLM → Ollama LLM → Answer
 ```
 
 ## Stack
 
 | Layer | Technology |
 |---|---|
-| LLM & Embeddings | [Ollama](https://ollama.com) (`llama3.2` + `nomic-embed-text`) |
-| Vector Store | [pgvector](https://github.com/pgvector/pgvector) (PostgreSQL extension) |
-| RAG Orchestration | [LangChain](https://python.langchain.com) |
+| LLM | [LiteLLM](https://github.com/BerriAI/litellm) gateway → [Ollama](https://ollama.com) (`llama3.2`) |
+| Embeddings | [Ollama](https://ollama.com) (`nomic-embed-text`) via `langchain_ollama` |
+| Vector Store | [LangChain PGVector](https://python.langchain.com/docs/integrations/vectorstores/pgvector/) (`langchain_postgres`) + [pgvector](https://github.com/pgvector/pgvector) |
+| RAG Orchestration | [LangChain](https://python.langchain.com) (`langchain_openai`, `langchain_postgres`) |
 | API Server | [FastAPI](https://fastapi.tiangolo.com) + [Uvicorn](https://www.uvicorn.org) |
 | File Watching | [Watchdog](https://github.com/gorakhargosh/watchdog) |
 | Runtime | Python 3.14, [uv](https://github.com/astral-sh/uv) |
@@ -30,26 +39,27 @@ The RAG service (`src/`) has two concurrent responsibilities, run in separate th
 
 **Ingest pipeline** — a Watchdog file observer monitors a directory for new files. When a file arrives:
 1. `chunk.py` reads it asynchronously and splits it into overlapping text chunks using LangChain's `RecursiveCharacterTextSplitter`
-2. `embed.py` calls Ollama (`nomic-embed-text`) to generate a 768-dimensional embedding for each chunk and writes it to pgvector
+2. `embed.py` calls Ollama (`nomic-embed-text`) via `OllamaEmbeddings` to generate 768-dimensional embeddings, then writes them to pgvector through `PGVector.aadd_texts()`
 
 **Query pipeline** — a FastAPI server exposes a `POST /query-rag` endpoint. When a question arrives:
-1. The question is embedded using the same model
-2. pgvector finds the top-3 most similar chunks using cosine distance (`<=>` operator)
-3. Those chunks are injected into a prompt template and sent to `llama3.2` via LangChain's `ChatOllama`
-4. The grounded answer is returned in the response
+1. The question is embedded using `OllamaEmbeddings` and the top-3 most similar chunks are retrieved via `PGVector.similarity_search()`
+2. Those chunks are injected into a prompt template and sent to `ChatOpenAI` pointed at the LiteLLM gateway (`http://litellm:4000/v1`)
+3. LiteLLM routes the request to `llama3.2` on Ollama and the grounded answer is returned
 
 ## Project Structure
 
 ```
-basic-rag/
+rag-intermediate/
 ├── src/
 │   ├── main.py       # Entry point — starts API server and file observer concurrently
 │   ├── server.py     # FastAPI app with /query-rag endpoint
 │   ├── ingest.py     # Watchdog observer that triggers the embed pipeline on new files
 │   ├── chunk.py      # Async streaming text chunker (LangChain splitter)
-│   ├── embed.py      # Generates embeddings and writes to pgvector
-│   ├── query.py      # Retrieves relevant chunks and calls the LLM
+│   ├── embed.py      # Generates embeddings and writes to pgvector via PGVector
+│   ├── query.py      # Retrieves relevant chunks via PGVector, calls LLM via LiteLLM
 │   └── config.py     # Environment-based configuration
+├── litellm/
+│   └── config.yaml              # LiteLLM model routing config
 ├── pgvector/
 │   └── init-scripts/init.sql   # Enables the pgvector extension on startup
 ├── docker-compose.yaml
@@ -70,6 +80,7 @@ On first run, `ollama-init` pulls `llama3.2` and `nomic-embed-text` — this may
 
 Services:
 - RAG API: `http://localhost:8000`
+- LiteLLM gateway: `http://localhost:4000`
 - Ollama: `http://localhost:11434`
 
 ## Usage
@@ -95,9 +106,10 @@ curl -X POST http://localhost:8000/query-rag \
 ```json
 {"response": "The capital of France is Paris."}
 ```
-Note: If you are using the provided example resource. Try prompting `Tell me about Henry Mackenzie`
 
-While this example project does not include a UI, you can also enter prompts by hitting the `/query-rag` endpoint via the swagger page at [http://localhost:8000/docs](http://localhost:8000/docs)
+Note: If you are using the provided example resource, try prompting `Tell me about Henry Mackenzie`
+
+You can also enter prompts via the Swagger UI at [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ## GPU Acceleration
 
@@ -105,31 +117,20 @@ CPU inference works out of the box. For GPU support on Linux with an NVIDIA card
 
 ## Key Concepts Explored
 
+- **LLM gateway pattern** — LiteLLM exposes an OpenAI-compatible API so the RAG service can use `ChatOpenAI` regardless of what model or provider is running underneath; switching models is a gateway config change, not a code change
+- **Provider portability** — because the RAG service speaks OpenAI-compatible REST, you could point LiteLLM at a cloud provider (e.g. Anthropic, OpenAI, Bedrock) by adding an entry to `litellm/config.yaml` with no changes to application code
+- **Vector store abstraction** — `PGVector` from `langchain_postgres` handles schema management, upserts, and similarity search so application code works at the level of documents and queries rather than SQL strings
 - **Chunking strategy** — overlapping windows (`chunk_size=1000`, `chunk_overlap=100`) prevent context from being cut off at chunk boundaries
 - **Embedding model separation** — using a dedicated embedding model (`nomic-embed-text`) separate from the generative model (`llama3.2`) is standard practice; each is optimized for its task
-- **Vector similarity search** — pgvector's `<=>` cosine distance operator finds semantically similar chunks without a full table scan
 - **Prompt grounding** — the system prompt instructs the LLM to answer strictly from the retrieved context and admit when it cannot find the answer, reducing hallucination
 - **Re-ingestion** — dropping a file that was previously ingested deletes the old embeddings before re-processing, preventing duplicate chunks
-- **Streaming chunker** — `chunk.py` reads files in blocks and yields chunks incrementally rather than loading the whole file into memory
 
 ## Design Trade-offs & Potential Improvements
 
-**Add an LLM gateway (e.g. LiteLLM) between the RAG service and Ollama**
+**Extend LiteLLM to cover embeddings**
 
-Currently, `query.py` and `embed.py` call Ollama directly using `langchain_ollama`'s `ChatOllama` and `OllamaEmbeddings`. This works, but it couples the application code to Ollama as a provider. Swapping to a different model or backend requires touching the RAG code itself.
-
-In a future iteration on this project I would use a gateway like LiteLLM between the RAG service and Ollama so the RAG service can speak to a single standard interface (via OpenAI-compatible REST API) regardless of what's running underneath. The primary advantages would include:
-
-- **Provider portability**: switching from a local Ollama model to a cloud provider becomes a configuration change in the gateway, not a code change in the RAG service
-- **Centralized model routing**: all model traffic flows through one place, making it straightforward to add logging, rate limiting, cost tracking, or fallback models
-- **Consistent interface**: the OpenAI-compatible API is considered the standard for LLM interoperability; building against it would be considered best practice
-
-**Use LangChain's `PGVector` store instead of raw SQL**
-
-`embed.py` and `query.py` manage the database directly — DDL statements to create the table, raw `psycopg` calls to insert embeddings, and a hand-written cosine similarity query using pgvector's `<=>` operator. I chose this more "rustic" approach merely for learning purposes. Writing the SQL by hand let me explore the mechanics of vector search and try different operators.
-
-In a more professional setup, I would use LangChain's `PGVector` vector store from `langchain-postgres` library. In fact, I had added it as a dependency in `pyproject.toml` at one point before deciding to go down the more primitive route.
+Embeddings still call Ollama directly via `OllamaEmbeddings`. LiteLLM supports embedding models too, which would let you swap the embedding provider the same way you can swap the generative model — as a gateway config change. The trade-off is additional latency through the gateway on every ingest operation.
 
 **Add an ORM layer**
 
-Related to the above, the direct `psycopg` calls in `embed.py` are not ideal. Introducing an ORM (which `langchain-postgres` already uses internally) would simplify and abstract away typical DB-related concerns like model/schema definitions, session management and transactions. Typically application code would never write SQL strings. This also makes it easier to add new tables (e.g. ingestion history, per-document metadata) without the schema management intermingling with business logic.
+The `PGVector` abstraction handles vector-related schema, but any additional tables (e.g. ingestion history, per-document metadata) would still require raw SQL or a separate ORM. Introducing SQLAlchemy ORM models alongside the existing async engine would give a consistent data-access pattern across the whole schema.
