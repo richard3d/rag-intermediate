@@ -1,6 +1,6 @@
 # RAG-Intermediate
 
-A Retrieval-Augmented Generation (RAG) system that evolves the [rag-basic](https://github.com/richardbecker/rag-basic) project by introducing two architectural improvements that were called out as future work: an LLM gateway (LiteLLM) and a proper vector store abstraction (LangChain's `PGVector`).
+A Retrieval-Augmented Generation (RAG) system that evolves the [rag-basic](https://github.com/richard3d/rag-basic) project by introducing two architectural improvements that were called out as future work: an LLM gateway (LiteLLM) and a proper vector store abstraction (LangChain's `PGVector`).
 
 ## What Changed from RAG-Basic
 
@@ -120,10 +120,13 @@ CPU inference works out of the box. For GPU support on Linux with an NVIDIA card
 - **LLM gateway pattern** — LiteLLM exposes an OpenAI-compatible API so the RAG service can use `ChatOpenAI` regardless of what model or provider is running underneath; switching models is a gateway config change, not a code change
 - **Provider portability** — because the RAG service speaks OpenAI-compatible REST, you could point LiteLLM at a cloud provider (e.g. Anthropic, OpenAI, Bedrock) by adding an entry to `litellm/config.yaml` with no changes to application code
 - **Vector store abstraction** — `PGVector` from `langchain_postgres` handles schema management, upserts, and similarity search so application code works at the level of documents and queries rather than SQL strings
+- **Rate limiting embedding calls** — While Litellm currently is configured to use Ollama embeddings, a cloud-based provider can be swapped in now. In that case we should be conscious of API calls especially if a ton of documents got dropped into the system all at once. Since this is a small project `InMemoryRateLimiter` from `langchain_core` is used, however in a production-grade system, I would opt for actual request-queueing with associated infrastructure; resilience and scalability being the obvious improvements.
 
 ## Design Trade-offs & Potential Improvements
 
-- **Rate limiting embedding calls** — While Litellm currently is configured to use Ollama embeddings, a cloud-based provider can be swapped in now. In that case we should be conscious of API calls especially if a ton of documents got dropped into the system all at once. Since this is a small project `InMemoryRateLimiter` from `langchain_core` is used, however in a production-grade system, I would opt for actual request-queueing with associated infrastructure; resilience and scalability being the obvious improvements.
-
 - **Hybrid search** - I've been looking at ParadeDB recently due to recommendation from a colleague [@zoe-codez](https://github.com/zoe-codez). After researching further I think this would be an obvious next step from just using a vector store since it supports full-text search. Vector similarity search captures semantic meaning well, but struggles with exact-match lookups like product IDs or serial numbers. Embeddings smooth over lexical differences, and rare identifiers may have unreliable representations. Hybrid search addresses this by combining vector similarity with BM25 full-text scoring (typically fused via Reciprocal Rank Fusion), providing semantic recall AND keyword precision in a single query.
+
+- **Multimodal RAG** - Up to this point, the input files for ingestion have been limited. The application still only supports UTF-8 text files. Parsing common types like `csv` and `pdf` is a natural evolutionary step. But, we can take this idea even futher; building a multimodal RAG system would allow us to ingest and embed things like images and charts and not just text.
+
+- **OpenAI API compatibility** - The `POST /query-rag` endpoint was hastily cobbled together just to get an interface to interact with the RAG pipeline. But, it isn't drop-in compatible with the broader AI ecosystem. Implementing it as `/v1/chat/completions` with an OpenAI-compatible request/response shape would allow tools like AnythingLLM, Open WebUI, or any OpenAI-compatible client to sit in front of it without modification — treating this service like any other LLM endpoint.
 
